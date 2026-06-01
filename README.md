@@ -30,17 +30,20 @@ See [Mozyfin docs](https://docs.mozy.vn) for full CLI reference.
 ## Quick Start
 
 ```bash
-# 1. Install dependencies
+# 1. Run setup check (tự kiểm tra Node, mozyfin, API key, config...)
+bash setup.sh
+
+# 2. Fix any issues setup.sh reports, then:
 npm install
 
-# 2. Create your config
+# 3. Create your config (setup.sh tự làm bước này nếu thấy thiếu)
 cp config.example.json config.json
 # Edit config.json with your watchlist tickers
 
-# 3. Fetch latest data
+# 4. Fetch latest data
 npm run pipeline:eod
 
-# 4. Start dashboard
+# 5. Start dashboard
 npm start
 # Open http://127.0.0.1:7878
 ```

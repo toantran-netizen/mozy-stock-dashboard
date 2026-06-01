@@ -1,11 +1,23 @@
 import { execFile } from 'node:child_process';
 
+const MOZY_SETUP_HINT = '\n💡 Setup: bash setup.sh (kiểm tra cài đặt) | Docs: https://docs.mozy.vn';
+
 export function runMozyfin(args, { timeoutMs = 60000 } = {}) {
   return new Promise((resolve, reject) => {
-    execFile('mozyfin', args, { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) => {
+    const child = execFile('mozyfin', args, { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) => {
       if (err) {
-        const msg = stderr?.toString().trim() || err.message;
-        return reject(new Error(`mozyfin ${args.join(' ')} failed: ${msg}`));
+        let msg = stderr?.toString().trim() || err.message || '';
+
+        // Detect common setup issues
+        if (err.code === 'ENOENT') {
+          msg = `mozyfin CLI chưa được cài.\n👉 Cài: npm install -g mozyfin-cli\n👉 Rồi: mozyfin login --api-key <KEY>\n👉 Lấy key: https://mozy.vn${MOZY_SETUP_HINT}`;
+        } else if (/unauthorized|401|403|invalid.*key|api.?key/i.test(msg)) {
+          msg = `API key không hợp lệ hoặc hết hạn.\n👉 Login lại: mozyfin login --api-key <KEY>\n👉 Hoặc set env: export MOZYFIN_API_KEY=<KEY>\n👉 Lấy key: https://mozy.vn${MOZY_SETUP_HINT}`;
+        } else if (/ENOTFOUND|ECONNREFUSED|network|timeout/i.test(msg)) {
+          msg = `Không kết nối được tới Mozyfin API. Kiểm tra mạng.${MOZY_SETUP_HINT}`;
+        }
+
+        return reject(new Error(`mozyfin ${args[0]} thất bại: ${msg}`));
       }
       resolve(stdout.toString());
     });
