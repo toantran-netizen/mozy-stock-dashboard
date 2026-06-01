@@ -5,8 +5,27 @@ Live local dashboard for VN stock watchlist using [Mozyfin](https://mozy.vn) as 
 ## Prerequisites
 
 - **Node.js** >= 18
-- **Mozyfin CLI** installed and authenticated (`npm i -g mozyfin-cli && mozyfin login`)
-- **Mozyfin API key** set as `MOZYFIN_API_KEY` env var (for Mozy AI features)
+- **Mozyfin CLI** — installed and authenticated
+
+### Setup Mozyfin CLI
+
+Mozyfin CLI is the data source for this dashboard. It provides real-time quotes, OHLCV, stats, news, TA, and AI-powered analysis for Vietnam stocks.
+
+```bash
+# 1. Install Mozyfin CLI globally
+npm install -g mozyfin-cli
+
+# 2. Get an API key from https://mozy.vn and login
+mozyfin login --api-key <YOUR_API_KEY>
+
+# 3. Or set key as env var (for Mozy AI features)
+export MOZYFIN_API_KEY=<YOUR_API_KEY>
+
+# 4. Verify it works
+mozyfin quote VCB.VN
+```
+
+See [Mozyfin docs](https://docs.mozy.vn) for full CLI reference.
 
 ## Quick Start
 

@@ -458,17 +458,91 @@ async function loadDetail(ticker) {
   }
 }
 
+async function getPipelineState() {
+  const r = await fetch('/api/overview');
+  const d = await r.json();
+  return d.pipeline || {};
+}
+
 async function refresh(mode) {
-  const id = mode === 'intraday' ? 'refreshIntra' : 'refreshEod';
+  const id = mode === 'eod' ? 'refreshEod' : 'refreshIntra';
   const btn = document.getElementById(id);
-  const old = btn.textContent;
-  btn.disabled = true; btn.textContent = mode === 'eod' ? '⏳ EOD đang chạy (~2 phút)…' : '⏳ Đang chạy…';
+  const label = mode === 'eod' ? 'EOD + AI' : 'intraday';
+  btn.disabled = true;
+
+  // Snapshot before triggering
+  const before = await getPipelineState();
+  const runKey = mode === 'eod' ? 'last_eod' : 'last_intraday';
+  const prevStartedAt = before[runKey]?.started_at;
+
+  // Trigger pipeline
+  btn.textContent = '⏳ Đang gọi pipeline…';
   try {
-    await fetch('/api/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode }) });
-    setTimeout(() => loadOverview(), mode === 'eod' ? 12000 : 4000);
-  } finally {
-    setTimeout(() => { btn.disabled = false; btn.textContent = old; }, mode === 'eod' ? 14000 : 4000);
+    const ref = await fetch('/api/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode }) });
+    if (!ref.ok && ref.status === 429) {
+      btn.textContent = '⚠️ Pipeline đang chạy, chờ tí…';
+      // Someone else started it — poll for completion anyway
+    }
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = `❌ Lỗi: ${e.message}`;
+    setTimeout(() => { btn.textContent = mode === 'eod' ? 'Run EOD + AI' : 'Refresh intraday'; }, 3000);
+    return;
   }
+
+  // Poll until pipeline starts (new started_at) then finishes (finished_at set)
+  const maxWait = mode === 'eod' ? 900 : 120; // 15 min / 2 min
+  const interval = mode === 'eod' ? 5000 : 2000;
+  let elapsed = 0;
+  let newRunSeen = false;
+
+  const poll = () => new Promise((resolve) => {
+    const check = async () => {
+      elapsed += interval;
+      try {
+        const state = await getPipelineState();
+        const run = state[runKey] || {};
+
+        if (!newRunSeen) {
+          // Check if a new run has started (different started_at, or started_at changed while prev was null)
+          if (run.started_at && run.started_at !== prevStartedAt) {
+            newRunSeen = true;
+            btn.textContent = `⏳ ${label} đang chạy (${Math.round(elapsed/1000)}s)…`;
+          } else if (elapsed > 15000) {
+            // Pipeline might have started before our snapshot — check if finished_at is recent
+            newRunSeen = true;
+          }
+        } else {
+          btn.textContent = `⏳ ${label} đang chạy (${Math.round(elapsed/1000)}s)…`;
+        }
+
+        // Check completion: either finished_at is set, or status is set
+        if (run.finished_at) {
+          btn.textContent = run.status === 'error' ? '⚠️ Pipeline lỗi!' : '✅ Hoàn tất!';
+          btn.disabled = false;
+          setTimeout(() => { btn.textContent = mode === 'eod' ? 'Run EOD + AI' : 'Refresh intraday'; }, 2000);
+          await loadOverview();
+          resolve();
+          return;
+        }
+
+        if (elapsed >= maxWait * 1000) {
+          btn.textContent = '⚠️ Timeout — thử lại sau';
+          btn.disabled = false;
+          setTimeout(() => { btn.textContent = mode === 'eod' ? 'Run EOD + AI' : 'Refresh intraday'; }, 3000);
+          await loadOverview(); // Reload anyway — pipeline might have finished silently
+          resolve();
+          return;
+        }
+      } catch (_) { /* polling error, keep trying */ }
+
+      setTimeout(check, interval);
+    };
+    check();
+  });
+
+  await poll();
+  btn.disabled = false;
 }
 
 document.getElementById('refreshIntra').onclick = () => refresh('intraday');
