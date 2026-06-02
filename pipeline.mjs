@@ -13,6 +13,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const config = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
 const mode = (process.argv[2] || 'intraday').toLowerCase();
 
+// Parse --tickers flag for targeted runs (comma-separated, e.g. --tickers VCB,FPT)
+const tickersArgIdx = process.argv.indexOf('--tickers');
+const targetTickers = tickersArgIdx >= 0 && process.argv[tickersArgIdx + 1]
+  ? process.argv[tickersArgIdx + 1].split(',').map(s => s.trim().toUpperCase()).filter(Boolean)
+  : null;
+const tickers = targetTickers || config.tickers;
+const isTargeted = !!targetTickers;
+
 async function fetchIntraday(db, ticker) {
   const sym = `${ticker}.VN`;
   console.log(`[intraday] ${ticker}: quote + ohlcv + ta`);
@@ -95,7 +103,7 @@ async function run() {
   let status = 'ok';
   let message = '';
   try {
-    for (const ticker of config.tickers) {
+    for (const ticker of tickers) {
       try {
         if (mode === 'intraday' || mode === 'all') await fetchIntraday(db, ticker);
         if (mode === 'eod' || mode === 'all') {
@@ -107,7 +115,7 @@ async function run() {
         message += `${ticker}:${e.message}; `;
       }
     }
-    if (mode === 'eod' || mode === 'all') {
+    if ((mode === 'eod' || mode === 'all') && !isTargeted) {
       await runMarketReview(db);
     }
   } catch (e) {

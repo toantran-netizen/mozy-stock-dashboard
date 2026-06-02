@@ -6,7 +6,15 @@ import { spawn } from 'node:child_process';
 import { openDb, getAllLatest, getLatest, getHistory, lastRun } from './db.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const config = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
+const configPath = path.join(__dirname, 'config.json');
+
+function loadConfig() {
+  return JSON.parse(fs.readFileSync(configPath, 'utf8'));
+}
+
+let config = loadConfig();
+let configChangeDebounce = null;
+const CONFIG_DEBOUNCE_MS = 800; // debounce file watcher for rapid saves
 
 const app = express();
 app.use(express.json());
@@ -97,6 +105,76 @@ app.use(express.static(path.join(__dirname, 'public'), { setHeaders: (res) => {
 
 const port = process.env.PORT || config.port || 7878;
 const host = process.env.HOST || config.host || '0.0.0.0';
+
+// ── Config hot-reload ──
+// Watches config.json for changes; on change, diffs ticker list and auto-triggers
+// pipeline for newly added tickers (intraday + eod data). Dashboard API picks up
+// the new config immediately without server restart.
+
+function diffTickers(oldList, newList) {
+  const oldSet = new Set(oldList);
+  const newSet = new Set(newList);
+  const added = [...newSet].filter(t => !oldSet.has(t));
+  const removed = [...oldSet].filter(t => !newSet.has(t));
+  return { added, removed };
+}
+
+function spawnPipeline(tickers, mode) {
+  const child = spawn('node', [
+    path.join(__dirname, 'pipeline.mjs'),
+    mode,
+    '--tickers', tickers.join(',')
+  ], {
+    cwd: __dirname,
+    stdio: 'inherit',
+    detached: true
+  });
+  child.unref();
+  child.on('error', (err) => {
+    console.error(`[config-watch] pipeline spawn error:`, err.message);
+  });
+  child.on('exit', (code) => {
+    console.log(`[config-watch] pipeline for ${tickers.join(',')} (${mode}) exited code=${code}`);
+  });
+}
+
+function onConfigChanged() {
+  let newConfig;
+  try {
+    newConfig = loadConfig();
+  } catch (e) {
+    console.error('[config-watch] failed to parse config.json:', e.message);
+    return;
+  }
+
+  const oldTickers = config.tickers || [];
+  const newTickers = newConfig.tickers || [];
+  const { added, removed } = diffTickers(oldTickers, newTickers);
+
+  if (added.length === 0 && removed.length === 0) {
+    console.log('[config-watch] config changed but tickers unchanged, reloading config');
+    config = newConfig;
+    return;
+  }
+
+  console.log(`[config-watch] tickers changed | added: [${added.join(',')}] | removed: [${removed.join(',')}]`);
+  config = newConfig;
+
+  if (added.length > 0) {
+    console.log(`[config-watch] auto-triggering pipeline (all) for new tickers: ${added.join(',')}`);
+    spawnPipeline(added, 'all');
+  }
+}
+
+// Use fs.watch with debounce (macOS fires multiple events per save)
+fs.watch(configPath, (eventType) => {
+  if (eventType !== 'change') return;
+  clearTimeout(configChangeDebounce);
+  configChangeDebounce = setTimeout(onConfigChanged, CONFIG_DEBOUNCE_MS);
+});
+
+console.log('[config-watch] watching config.json for changes');
+
 app.listen(port, host, () => {
   console.log(`stock-dashboard server: http://${host}:${port}`);
 });
