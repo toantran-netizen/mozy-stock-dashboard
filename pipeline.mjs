@@ -21,21 +21,37 @@ const targetTickers = tickersArgIdx >= 0 && process.argv[tickersArgIdx + 1]
 const tickers = targetTickers || config.tickers;
 const isTargeted = !!targetTickers;
 
+function hasError(result) {
+  return !result || result.error != null;
+}
+
 async function fetchIntraday(db, ticker) {
   const sym = `${ticker}.VN`;
   console.log(`[intraday] ${ticker}: quote + ohlcv + ta`);
-  saveLatest(db, ticker, 'quote', await safeFetch(['quote', sym, '--limit', '1']));
-  saveLatest(db, ticker, 'intraday_ohlcv', await safeFetch(['ohlcv', sym, '--timeframe', '1d', '--limit', '5']));
-  saveLatest(db, ticker, 'ta', await safeFetch(['ta', sym, '--rsi', '14', '--macd', '--sma', '5,10,20']));
+  const results = {};
+  results.quote = await safeFetch(['quote', sym, '--limit', '1']);
+  results.intraday_ohlcv = await safeFetch(['ohlcv', sym, '--timeframe', '1d', '--limit', '5']);
+  results.ta = await safeFetch(['ta', sym, '--rsi', '14', '--macd', '--sma', '5,10,20']);
+
+  for (const [kind, result] of Object.entries(results)) {
+    saveLatest(db, ticker, kind, result);
+  }
+  return results;
 }
 
 async function fetchEod(db, ticker) {
   const sym = `${ticker}.VN`;
   console.log(`[eod] ${ticker}: stats + ohlcv + news + risk`);
-  saveLatest(db, ticker, 'stats', await safeFetch(['stats', sym]));
-  saveLatest(db, ticker, 'ohlcv', await safeFetch(['ohlcv', sym, '--timeframe', '1d', '--limit', '90']));
-  saveLatest(db, ticker, 'news', await safeFetch(['news', '--query', sym, '--limit', '15']));
-  saveLatest(db, ticker, 'risk', await safeFetch(['risk', sym]));
+  const results = {};
+  results.stats = await safeFetch(['stats', sym]);
+  results.ohlcv = await safeFetch(['ohlcv', sym, '--timeframe', '1d', '--limit', '90']);
+  results.news = await safeFetch(['news', '--query', sym, '--limit', '15']);
+  results.risk = await safeFetch(['risk', sym]);
+
+  for (const [kind, result] of Object.entries(results)) {
+    saveLatest(db, ticker, kind, result);
+  }
+  return results;
 }
 
 function getRows(node) {
@@ -49,6 +65,19 @@ async function generateDecision(db, ticker) {
   const newsRows = getRows(getLatest(db, ticker, 'news'));
   const statsRows = getRows(getLatest(db, ticker, 'stats'));
   const riskRows = getRows(getLatest(db, ticker, 'risk'));
+
+  // Check if any data kind already has a fresh error from this run
+  const dataKinds = [
+    getLatest(db, ticker, 'quote'),
+    getLatest(db, ticker, 'ohlcv'),
+    getLatest(db, ticker, 'stats'),
+  ];
+  const hasDataErrors = dataKinds.some(k => k?.data?.error != null);
+  if (hasDataErrors) {
+    console.log(`[eod] ${ticker}: skipping decision — data fetch errors detected`);
+    saveLatest(db, ticker, 'decision', { error: 'API data unavailable — không thể tạo phân tích', _data_error: true });
+    return;
+  }
 
   const today = quoteRows[quoteRows.length - 1] || {};
   const stats = statsRows[0] || {};
@@ -104,16 +133,33 @@ async function run() {
   let message = '';
   try {
     for (const ticker of tickers) {
+      const tickerErrors = [];
       try {
-        if (mode === 'intraday' || mode === 'all') await fetchIntraday(db, ticker);
+        if (mode === 'intraday' || mode === 'all') {
+          const intraResults = await fetchIntraday(db, ticker);
+          for (const [kind, r] of Object.entries(intraResults)) {
+            if (hasError(r)) tickerErrors.push(`${kind}: ${r.error}`);
+          }
+        }
         if (mode === 'eod' || mode === 'all') {
-          await fetchEod(db, ticker);
+          const eodResults = await fetchEod(db, ticker);
+          for (const [kind, r] of Object.entries(eodResults)) {
+            if (hasError(r)) tickerErrors.push(`${kind}: ${r.error}`);
+          }
           await generateDecision(db, ticker);
         }
       } catch (e) {
         console.error(`[${mode}] ${ticker} error:`, e.message);
+        tickerErrors.push(`pipeline: ${e.message}`);
         message += `${ticker}:${e.message}; `;
       }
+      // Save per-ticker pipeline status
+      saveLatest(db, ticker, '_pipeline_status', {
+        ok: tickerErrors.length === 0,
+        mode,
+        ts: Date.now(),
+        errors: tickerErrors.length > 0 ? tickerErrors : undefined,
+      });
     }
     if ((mode === 'eod' || mode === 'all') && !isTargeted) {
       await runMarketReview(db);

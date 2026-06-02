@@ -36,6 +36,7 @@ app.get('/api/overview', (_req, res) => {
         intraday_ohlcv: all.intraday_ohlcv?.data,
         data_perspective: all.data_perspective?.data,
         decision: all.decision?.data,
+        pipeline_status: all._pipeline_status?.data,
         last_quote_ts: all.intraday_ohlcv?.ts || all.quote?.ts || null,
         last_decision_ts: all.decision?.ts || null,
       };

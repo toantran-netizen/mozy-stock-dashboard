@@ -120,6 +120,8 @@
   .news-item span{color:var(--muted);font-size:11.5px}
 
   .empty{padding:30px;text-align:center;color:var(--muted)}
+  .card-error{background:#FEF2F2;border:2px solid #FCA5A5;cursor:default}.card-error:hover{transform:none;box-shadow:0 1px 2px rgba(15,23,42,.04)}
+  .err-msg{margin-top:12px;font-size:14px;line-height:1.6}
 
   @media (max-width:900px){.review-grid,.topline{grid-template-columns:repeat(2,1fr)}.panel-grid,.review-list,.battle .grid4,.blocks{grid-template-columns:1fr}}
 </style>
@@ -218,6 +220,30 @@ async function loadOverview() {
   const grid = document.getElementById('cards');
   grid.innerHTML = '';
   for (const t of data.tickers) {
+    const pStatus = t.pipeline_status;
+    const isError = pStatus && !pStatus.ok;
+
+    if (isError) {
+      // Error card — show API failure prominently
+      const errCard = document.createElement('div');
+      errCard.className = 'card card-error';
+      const errMsgs = (pStatus.errors || []).map(e => `<li>${e}</li>`).join('');
+      errCard.innerHTML = `
+        <div class="row">
+          <h2>⚠️ ${t.ticker}</h2>
+        </div>
+        <div class="err-msg">
+          <div style="font-weight:700;margin-bottom:6px;color:#DC2626">Mozy API không phản hồi — dữ liệu không khả dụng</div>
+          <ul style="margin:0;padding-left:16px;font-size:12px;color:#64748B">${errMsgs}</ul>
+        </div>
+        <div class="meta-row" style="margin-top:12px">
+          <span style="color:#DC2626">🛑 Lần chạy cuối: ${pStatus.mode || '?'} · ${fmtTs(pStatus.ts)}</span>
+        </div>
+      `;
+      grid.appendChild(errCard);
+      continue;
+    }
+
     const q = pickRow(t.quote);
     const ta = pickRow(t.ta_latest);
     const ohlcvRows = rowsOf(t.intraday_ohlcv);
