@@ -82,10 +82,8 @@ app.get('/api/stock/:ticker/history/:kind', (req, res) => {
 });
 
 let refreshing = false;
-app.post('/api/refresh', (req, res) => {
-  if (refreshing) return res.status(429).json({ error: 'refresh already running' });
-  const mode = (req.body?.mode || 'intraday').toLowerCase();
-  if (!['intraday', 'eod', 'all'].includes(mode)) return res.status(400).json({ error: 'invalid mode' });
+function startPipeline(mode) {
+  if (refreshing) return false;
   refreshing = true;
   const child = spawn('node', [path.join(__dirname, 'pipeline.mjs'), mode], {
     cwd: __dirname,
@@ -94,8 +92,67 @@ app.post('/api/refresh', (req, res) => {
   });
   child.unref();
   child.on('exit', () => { refreshing = false; });
+  console.log(`[scheduler] started pipeline: ${mode}`);
+  return true;
+}
+
+app.post('/api/refresh', (req, res) => {
+  const mode = (req.body?.mode || 'intraday').toLowerCase();
+  if (!['intraday', 'eod', 'all'].includes(mode)) return res.status(400).json({ error: 'invalid mode' });
+  if (!startPipeline(mode)) return res.status(429).json({ error: 'refresh already running' });
   res.json({ ok: true, mode, started: true });
 });
+
+// --- Auto-refresh scheduler (timezone-aware, no external deps) ---
+const TZ = config.eodTimezone || 'Asia/Saigon';
+const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+
+function tzNow() {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: TZ, weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(new Date());
+  const get = t => parts.find(p => p.type === t)?.value;
+  return {
+    weekday: get('weekday'),
+    hour: parseInt(get('hour'), 10),
+    minute: parseInt(get('minute'), 10),
+    dateKey: `${get('year')}-${get('month')}-${get('day')}`
+  };
+}
+
+// Parse "m h * * dow" — only minute+hour are honored (matches config format)
+function parseEodCron(expr) {
+  const f = (expr || '0 16 * * 1-5').trim().split(/\s+/);
+  return { minute: parseInt(f[0], 10) || 0, hour: parseInt(f[1], 10) || 16 };
+}
+const eodTime = parseEodCron(config.eodCronExpr);
+const intradayMs = config.intradayIntervalMs || 300000;
+
+function isMarketHours(n) {
+  if (!WEEKDAYS.includes(n.weekday)) return false;
+  const mins = n.hour * 60 + n.minute;
+  return mins >= 9 * 60 && mins <= 15 * 60; // 09:00–15:00 VN
+}
+
+// Intraday refresh during market hours
+setInterval(() => {
+  const n = tzNow();
+  if (isMarketHours(n)) startPipeline('intraday');
+}, intradayMs);
+
+// EOD refresh: fire once when local time hits the configured weekday cron slot
+let lastEodDate = null;
+setInterval(() => {
+  const n = tzNow();
+  if (!WEEKDAYS.includes(n.weekday)) return;
+  if (n.hour === eodTime.hour && n.minute === eodTime.minute && lastEodDate !== n.dateKey) {
+    lastEodDate = n.dateKey;
+    startPipeline('eod');
+  }
+}, 60000);
+
+console.log(`[scheduler] intraday every ${Math.round(intradayMs / 1000)}s during market hours; EOD ${String(eodTime.hour).padStart(2, '0')}:${String(eodTime.minute).padStart(2, '0')} ${TZ} on weekdays`);
 
 // Static dashboard (no cache for dev)
 app.use(express.static(path.join(__dirname, 'public'), { setHeaders: (res) => {
