@@ -135,7 +135,7 @@ async function run() {
     for (const ticker of tickers) {
       const tickerErrors = [];
       try {
-        if (mode === 'intraday' || mode === 'all') {
+        if (mode === 'intraday' || mode === 'all' || mode === 'eod') {
           const intraResults = await fetchIntraday(db, ticker);
           for (const [kind, r] of Object.entries(intraResults)) {
             if (hasError(r)) tickerErrors.push(`${kind}: ${r.error}`);
