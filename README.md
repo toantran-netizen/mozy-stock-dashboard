@@ -56,6 +56,28 @@ npm start
 | `eod` | `npm run pipeline:eod` | Stats + OHLCV + News + Risk + Mozy AI Decision (once/day after close) |
 | `all` | `npm run pipeline:all` | Both intraday + eod |
 
+## Social Posts Tab 💬
+
+The dashboard includes a Social Posts tab for market sentiment analysis from social media sources:
+
+**Overview view (default):**
+- 🔥 **Chủ đề nóng** — topic-based market assessment from 20 latest posts
+  - Detects themes: Ngân hàng, Bất động sản, Chứng khoán, Thép, Vĩ mô, Dòng tiền, etc.
+  - Per topic: Nhận định (who said what) + Khuyến nghị (MUA/BÁN/GIỮ per source)
+  - Instant, local keyword analysis — zero AI credits
+- 📊 **Nhận định theo mã** — per-ticker source-by-source góc nhìn
+- 📋 **20 post mới nhất** — raw, no filter
+
+**Search:** Enter any ticker (e.g. HPG, VCB) → AI-powered summary + source viewpoints
+
+**Refresh:** Click 🔄 Làm mới to clear cache and fetch fresh data
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/social-overview` | Market assessment + per-ticker summaries + raw posts |
+| `GET /api/social-posts?search=HPG` | AI summary for a specific ticker |
+| `POST /api/social-cache-clear` | Clear social posts cache |
+
 ## Cron suggestion
 
 ```
